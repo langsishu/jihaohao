@@ -1,0 +1,79 @@
+{
+	"name": "记号号",
+	"appid": "__UNI__0AC7D75",
+	"description": "记录账号密码，快速输入账号密码",
+	"versionName": "1.0.0",
+	"versionCode": "100",
+	"uni-app-x": {},
+	"quickapp": {},
+	"mp-weixin": {
+		"appid": "",
+		"setting": {
+			"urlCheck": false
+		},
+		"usingComponents": true
+	},
+	"mp-alipay": {
+		"usingComponents": true
+	},
+	"mp-baidu": {
+		"usingComponents": true
+	},
+	"mp-toutiao": {
+		"usingComponents": true
+	},
+	"uniStatistics": {
+		"enable": false
+	},
+	"vueVersion": "3",
+	"app": {
+		"distribute": {
+			"icons": {
+				"android": {
+					"hdpi": "tubiao2.png",
+					"xhdpi": "tubiao2.png",
+					"xxhdpi": "tubiao2.png",
+					"xxxhdpi": "tubiao2.png"
+				}
+			}
+		}
+	},
+	"app-plus": {
+		"distribute": {
+			"android": {
+				"permissions": [
+					"android.permission.SYSTEM_ALERT_WINDOW"
+				]
+			}
+		}
+	},
+	"app-android": {
+		"distribute": {
+			"permissions": [
+				"<uses-permission android:name=\"android.permission.SYSTEM_ALERT_WINDOW\"/>"
+			],
+			"modules": {},
+			"icons": {
+				"hdpi": "D:/AI project/app/记号号/tubiao2.png",
+				"xhdpi": "tubiao2.png",
+				"xxhdpi": "tubiao2.png",
+				"xxxhdpi": "tubiao2.png"
+			},
+			"splashScreens": {
+				"default": {}
+			}
+		}
+	},
+	"app-ios": {
+		"distribute": {
+			"modules": {},
+			"icons": {},
+			"splashScreens": {}
+		}
+	},
+	"web": {
+		"router": {
+			"mode": ""
+		}
+	}
+}

@@ -1,0 +1,29 @@
+{
+  "id": "__UNI__0AC7D75",
+  "name": "记号号",
+  "description": "记录账号密码，快速输入账号密码",
+  "version": {
+    "name": "1.0.0",
+    "code": "100"
+  },
+  "uni-app-x": {
+    "compilerVersion": "5.14"
+  },
+  "app-android": {
+    "distribute": {
+      "permissions": [
+        "<uses-permission android:name=\"android.permission.SYSTEM_ALERT_WINDOW\"/>"
+      ],
+      "modules": {},
+      "icons": {
+        "hdpi": "D:/AI project/app/账号密码记录/tubiao2.png",
+        "xhdpi": "tubiao2.png",
+        "xxhdpi": "tubiao2.png",
+        "xxxhdpi": "tubiao2.png"
+      },
+      "splashScreens": {
+        "default": {}
+      }
+    }
+  }
+}

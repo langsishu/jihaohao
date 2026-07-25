@@ -1,0 +1,478 @@
+<template>
+	<view class="page">
+		<view class="header">
+			<view class="header-icon">
+				<image v-if="cat.customIcon.length > 0" :src="cat.customIcon" class="header-img" />
+				<text v-else class="header-emoji">{{ typeIcon }}</text>
+			</view>
+			<view class="header-info">
+				<text class="header-name">{{ cat.name }}</text>
+				<view class="header-type-row">
+					<text class="header-type">{{ typeLabel }}</text>
+					<text v-if="cat.type == 'website' && cat.url != null && cat.url.length > 0" class="header-url">{{ cat.url }}</text>
+				</view>
+			</view>
+			<view class="header-right">
+				<text v-if="cat.type == 'website' && cat.url != null && cat.url.length > 0" class="header-url-copy" @click.stop="copyText(cat.url)">📋</text>
+				<text class="header-count">{{ cat.records.length }}/10</text>
+			</view>
+		</view>
+
+		<scroll-view class="list-scroll" scroll-y="true">
+			<view class="record-list" v-if="cat.records.length > 0">
+				<view v-for="(rec, index) in cat.records" :key="rec.id" class="record-item">
+					<view class="rec-seq"><text class="seq-num">{{ index + 1 }}</text></view>
+
+					<view class="rec-text">
+						<view class="rec-row"><text class="rec-label">账号</text><text class="rec-value">{{ rec.account }}<text v-if="rec.remark.length > 0" class="rec-star" @click.stop="openNote(rec)">★</text></text></view>
+						<view class="rec-row"><text class="rec-label">密码</text><text class="rec-value">{{ rec.password }}</text></view>
+					</view>
+
+					<view class="rec-actions">
+						<view class="act-left">
+							<text class="copy-btn" @click="copyText(rec.account)">复制</text>
+							<text class="copy-btn" @click="copyText(rec.password)">复制</text>
+						</view>
+						<view class="act-divider" />
+						<view class="act-mid">
+							<text class="rec-gear" @click="onRecordMenu(rec)">⚙</text>
+						</view>
+						<view class="act-divider" />
+						<view class="act-right">
+							<text class="auto-btn" @click="quickLogin(rec)">🚀 一键</text>
+						</view>
+					</view>
+				</view>
+			</view>
+			<view class="empty" v-else>
+				<text class="empty-text">暂无账号记录</text>
+				<text class="empty-sub">点击下方按钮添加</text>
+			</view>
+		</scroll-view>
+
+		<view class="bottom-bar">
+			<view class="add-btn" :class="{ disabled: cat.records.length >= 10 }" @click="addRecord">
+				<text class="add-btn-text">+ 新增账号</text>
+			</view>
+		</view>
+
+		<view class="overlay" v-if="showEditForm" @click="closeEditForm">
+			<view class="form-panel" @click.stop>
+				<text class="form-title">{{ isNew ? '新增账号' : '编辑账号' }}</text>
+				<input v-model="editAccount" placeholder="账号" class="input" type="text" />
+				<input v-model="editPassword" placeholder="密码" class="input" type="text" />
+				<view class="form-btns">
+					<text class="btn btn-cancel" @click="closeEditForm">取消</text>
+					<text class="btn btn-save" @click="saveEdit">保存</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="overlay" v-if="showMoveForm" @click="closeMoveForm">
+			<view class="form-panel" @click.stop>
+				<text class="form-title">移动位置</text>
+				<text class="form-desc">当前位置: {{ currentMovePos }}  →  输入目标位置 (1-{{ cat.records.length }})</text>
+				<input v-model="moveTargetPos" placeholder="目标位置" class="input" type="text" />
+				<view class="form-btns">
+					<text class="btn btn-cancel" @click="closeMoveForm">取消</text>
+					<text class="btn btn-save" @click="confirmMove">确定</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="overlay" v-if="showNote" @click="closeNote">
+			<view class="form-panel" @click.stop>
+				<view class="form-title-row">
+					<text class="form-title">备注</text>
+					<text class="form-close" @click="closeNote">✕</text>
+				</view>
+				<scroll-view v-if="!noteEditing" scroll-y="true" class="note-content">
+					<text class="note-text">{{ noteDisplayText }}</text>
+				</scroll-view>
+				<textarea v-else v-model="noteText" class="note-textarea" placeholder="输入备注内容..." />
+				<view class="form-btns">
+					<template v-if="!noteEditing">
+						<text class="btn btn-delete" @click="deleteNote">删除</text>
+						<text class="btn btn-save" @click="editNote">编辑</text>
+					</template>
+					<template v-else>
+						<text class="btn btn-cancel" @click="cancelEditNote">取消</text>
+						<text class="btn btn-save" @click="saveNote">保存</text>
+					</template>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	// #ifdef APP-ANDROID
+	import { showFloatingButton, hasOverlayPermission, requestOverlayPermission } from '@/utssdk/app-android/index'
+	// #endif
+
+	class RecordItem {
+		id: string = ''
+		account: string = ''
+		password: string = ''
+		remark: string = ''
+		constructor(id: string = '', account: string = '', password: string = '', remark: string = '') {
+			this.id = id; this.account = account; this.password = password; this.remark = remark
+		}
+	}
+
+	class Category {
+		id: string = ''
+		name: string = ''
+		type: string = ''
+		url: string = ''
+		records: RecordItem[] = []
+		order: number = 0
+		customIcon: string = ''
+		customType: string = ''
+	}
+
+	function cloneCategory(c: Category, newRecords: RecordItem[] | null = null): Category {
+		const nc = new Category()
+		nc.id = c.id; nc.name = c.name; nc.type = c.type
+		nc.url = c.url; nc.order = c.order
+		nc.customIcon = c.customIcon; nc.customType = c.customType
+		nc.records = newRecords != null ? newRecords : c.records
+		return nc
+	}
+
+	const cat = ref(new Category())
+	const showEditForm = ref(false)
+	const isNew = ref(false)
+	const editingRecId = ref('')
+	const editAccount = ref('')
+	const editPassword = ref('')
+	const showMoveForm = ref(false)
+	const moveTargetPos = ref('')
+	const movingRecId = ref('')
+	const currentMovePos = ref(0)
+	const pendingPwd = ref('')
+	const showNote = ref(false)
+	const noteEditing = ref(false)
+	const noteText = ref('')
+
+	const noteDisplayText = computed(() => {
+		const r = cat.value.records.find(x => x.id == editingRecId.value)
+		if (r == null) return ''
+		return r.remark.length > 0 ? r.remark : '暂无备注'
+	})
+
+	const typeIcon = computed(() => {
+		switch (cat.value.type) { case 'app': return '📱'; case 'website': return '🌐'; default: return '📄' }
+	})
+	const typeLabel = computed(() => {
+		if (cat.value.type == 'app') return '应用'
+		if (cat.value.type == 'website') return '网站'
+		if (cat.value.customType.length > 0) return cat.value.customType
+		return '其他'
+	})
+
+	function storageToCategory(obj: UTSJSONObject): Category {
+		const c = new Category()
+		c.id = obj['id'] as string; c.name = obj['name'] as string; c.type = obj['type'] as string
+		const urlVal = obj['url']; c.url = urlVal != null ? (urlVal as string) : ''
+		const orderVal = obj['order']; c.order = orderVal != null ? (orderVal as number) : 0
+		const iconVal = obj['customIcon']; c.customIcon = iconVal != null ? (iconVal as string) : ''
+		const ctVal = obj['customType']; c.customType = ctVal != null ? (ctVal as string) : ''
+		const recs = obj['records'] as UTSJSONObject[]
+		if (recs != null) { for (let j = 0; j < recs.length; j++) { const r = recs[j]; const rRemark = r['remark']; c.records.push(new RecordItem(r['id'] as string, r['account'] as string, r['password'] as string, rRemark != null ? (rRemark as string) : '')) } }
+		return c
+	}
+
+	function categoryToStorage(cat: Category): UTSJSONObject {
+		const recs: UTSJSONObject[] = []
+		for (let i = 0; i < cat.records.length; i++) { const r = cat.records[i]; recs.push({ id: r.id, account: r.account, password: r.password, remark: r.remark } as UTSJSONObject) }
+		return { id: cat.id, name: cat.name, type: cat.type, url: cat.url, records: recs, order: cat.order, customIcon: cat.customIcon, customType: cat.customType } as UTSJSONObject
+	}
+
+	function loadCategory() {
+		try {
+			const raw = uni.getStorageSync('_curCat')
+			if (raw != null && typeof raw != 'string') {
+				const parsed = storageToCategory(raw as UTSJSONObject)
+				const allRaw = uni.getStorageSync('categories')
+				if (allRaw != null && typeof allRaw != 'string') {
+					const arr = allRaw as UTSJSONObject[]
+					for (let i = 0; i < arr.length; i++) { const item = storageToCategory(arr[i]); if (item.id == parsed.id) { cat.value = item; return } }
+				}
+				cat.value = parsed
+			}
+		} catch (e) { uni.showToast({ title: '加载失败', icon: 'none' }) }
+	}
+
+	function saveAllData() {
+		try {
+			const allRaw = uni.getStorageSync('categories')
+			if (allRaw != null && typeof allRaw != 'string') {
+				const arr = allRaw as UTSJSONObject[]
+				const all: Category[] = []
+				for (let i = 0; i < arr.length; i++) { all.push(storageToCategory(arr[i])) }
+				const idx = all.findIndex(x => x.id == cat.value.id)
+				if (idx >= 0) {
+					all[idx] = cat.value
+					const newArr: UTSJSONObject[] = []
+					for (let i = 0; i < all.length; i++) { newArr.push(categoryToStorage(all[i])) }
+					uni.setStorageSync('categories', newArr)
+					uni.setStorageSync('_updatedCat', '1')
+				}
+			}
+		} catch (e) { uni.showToast({ title: '保存失败', icon: 'none' }) }
+	}
+
+	function genId(): string { return Date.now().toString(36) + Math.random().toString(36).substring(2, 8) }
+
+	function copyText(text: string) {
+		uni.setClipboardData({ data: text, success: () => { uni.showToast({ title: '已复制到剪贴板', icon: 'success' }) }, fail: () => { uni.showToast({ title: '复制失败', icon: 'none' }) } })
+	}
+
+	function addRecord() {
+		if (cat.value.records.length >= 10) { uni.showToast({ title: '每个模块最多10条', icon: 'none' }); return }
+		isNew.value = true; editingRecId.value = ''; editAccount.value = ''; editPassword.value = ''
+		showEditForm.value = true
+	}
+
+	function editRecord(rec: RecordItem) {
+		isNew.value = false; editingRecId.value = rec.id
+		editAccount.value = rec.account; editPassword.value = rec.password
+		showEditForm.value = true
+	}
+
+	function closeEditForm() { showEditForm.value = false }
+
+	function saveEdit() {
+		if (editAccount.value.trim().length == 0) { uni.showToast({ title: '请输入账号', icon: 'none' }); return }
+		if (editPassword.value.trim().length == 0) { uni.showToast({ title: '请输入密码', icon: 'none' }); return }
+		if (isNew.value) {
+			const newRecs: RecordItem[] = []
+			for (let i = 0; i < cat.value.records.length; i++) { newRecs.push(cat.value.records[i]) }
+			newRecs.push(new RecordItem(genId(), editAccount.value.trim(), editPassword.value.trim()))
+			cat.value = cloneCategory(cat.value, newRecs)
+		} else if (editingRecId.value.length > 0) {
+			const found = cat.value.records.find(x => x.id == editingRecId.value)
+			if (found != null) { found.account = editAccount.value.trim(); found.password = editPassword.value.trim() }
+		}
+		saveAllData(); closeEditForm()
+		uni.showToast({ title: isNew.value ? '添加成功' : '修改成功', icon: 'success' })
+	}
+
+	function deleteRecord(rec: RecordItem) {
+		uni.showModal({
+			title: '删除确认', content: '确定删除这条记录吗？',
+			success: (res) => { if (res.confirm) {
+				const newRecs = cat.value.records.filter(x => x.id !== rec.id)
+				cat.value = cloneCategory(cat.value, newRecs)
+				saveAllData()
+				uni.showToast({ title: '已删除', icon: 'success' })
+			}}
+		})
+	}
+
+	function moveRecordTo(fromIdx: number, toIdx: number) {
+		if (fromIdx < 0 || toIdx < 0 || fromIdx >= cat.value.records.length || toIdx >= cat.value.records.length) return
+		if (fromIdx == toIdx) return
+		const newRecs: RecordItem[] = []
+		const item = cat.value.records[fromIdx]
+		for (let i = 0; i < cat.value.records.length; i++) { if (i == fromIdx) continue; newRecs.push(cat.value.records[i]) }
+		newRecs.splice(toIdx, 0, item)
+		cat.value = cloneCategory(cat.value, newRecs)
+		saveAllData()
+	}
+
+	function openNote(rec: RecordItem): void {
+		editingRecId.value = rec.id
+		noteEditing.value = false
+		noteText.value = rec.remark
+		showNote.value = true
+	}
+
+	function closeNote(): void {
+		showNote.value = false
+		noteEditing.value = false
+		editingRecId.value = ''
+	}
+
+	function editNote(): void {
+		const r = cat.value.records.find(x => x.id == editingRecId.value)
+		if (r == null) return
+		noteText.value = r.remark
+		noteEditing.value = true
+	}
+
+	function cancelEditNote(): void {
+		noteEditing.value = false
+	}
+
+	function saveNote(): void {
+		const rec = cat.value.records.find(x => x.id == editingRecId.value)
+		if (rec == null) return
+		rec.remark = noteText.value.trim()
+		const newRecs: RecordItem[] = []
+		for (let i = 0; i < cat.value.records.length; i++) { newRecs.push(cat.value.records[i]) }
+		cat.value = cloneCategory(cat.value, newRecs)
+		saveAllData()
+		noteEditing.value = false
+		uni.showToast({ title: '备注已保存', icon: 'success' })
+	}
+
+	function deleteNote(): void {
+		const rec = cat.value.records.find(x => x.id == editingRecId.value)
+		if (rec == null) return
+		rec.remark = ''
+		const newRecs: RecordItem[] = []
+		for (let i = 0; i < cat.value.records.length; i++) { newRecs.push(cat.value.records[i]) }
+		cat.value = cloneCategory(cat.value, newRecs)
+		saveAllData()
+		showNote.value = false
+		editingRecId.value = ''
+		uni.showToast({ title: '备注已删除', icon: 'success' })
+	}
+
+	function onRecordMenu(rec: RecordItem) {
+		const idx = cat.value.records.findIndex(x => x.id == rec.id)
+		const opts: string[] = ['📝 备注', '✏️ 编辑', '🗑 删除']
+		if (idx > 0) opts.push('⬆ 上移')
+		if (idx < cat.value.records.length - 1) opts.push('⬇ 下移')
+		opts.push('📌 移至指定位置')
+		uni.showActionSheet({
+			itemList: opts,
+			success: (res) => {
+				const label = opts[res.tapIndex]
+				if (label == '📝 备注') openNote(rec)
+				else if (label == '✏️ 编辑') editRecord(rec)
+				else if (label == '🗑 删除') deleteRecord(rec)
+				else if (label == '⬆ 上移') moveRecordTo(idx, idx - 1)
+				else if (label == '⬇ 下移') moveRecordTo(idx, idx + 1)
+				else if (label == '📌 移至指定位置') {
+					movingRecId.value = rec.id
+					moveTargetPos.value = ''
+					currentMovePos.value = idx + 1
+					showMoveForm.value = true
+				}
+			}
+		})
+	}
+
+	function closeMoveForm() { showMoveForm.value = false }
+
+	function confirmMove() {
+		const posStr = moveTargetPos.value.trim()
+		if (posStr.length == 0) { uni.showToast({ title: '请输入位置', icon: 'none' }); return }
+		const pos = parseInt(posStr)
+		if (pos < 1 || pos > cat.value.records.length) { uni.showToast({ title: '位置超出范围', icon: 'none' }); return }
+		const fromIdx = cat.value.records.findIndex(x => x.id == movingRecId.value)
+		if (fromIdx < 0) { closeMoveForm(); return }
+		moveRecordTo(fromIdx, pos - 1)
+		closeMoveForm()
+		uni.showToast({ title: '已移动', icon: 'success' })
+	}
+
+	onLoad(() => { loadCategory() })
+
+	onPageShow(() => {
+		const activity = UTSAndroid.getUniActivity()
+		if (activity != null) {
+			const prefs = activity.getSharedPreferences("float_data", 0)
+			const data = prefs.getString("data", "")
+			if (data != null && (data as string).length > 0) {
+				prefs.edit().clear().apply()
+				uni.setClipboardData({ data: data as string })
+				activity.moveTaskToBack(true)
+				return
+			}
+		}
+		if (pendingPwd.value.length > 0) {
+			const pwd = pendingPwd.value
+			pendingPwd.value = ''
+			uni.setClipboardData({ data: pwd })
+			uni.showToast({ title: '密码已复制，再切回去粘贴', icon: 'none', duration: 2500 })
+		}
+	})
+
+	function quickLogin(rec: RecordItem) {
+		// #ifdef APP-ANDROID
+		if (!hasOverlayPermission()) {
+			uni.showModal({
+				title: '需要悬浮窗权限',
+				content: '请在设置中开启"显示在其他应用上层"权限',
+				success: (res) => {
+					if (res.confirm) requestOverlayPermission()
+				}
+			})
+			return
+		}
+		// #endif
+		uni.setClipboardData({
+			data: rec.account,
+			success: () => {
+				// #ifdef APP-ANDROID
+				showFloatingButton(rec.account, rec.password, cat.value.url)
+				UTSAndroid.getUniActivity()?.moveTaskToBack(true)
+				// #endif
+				pendingPwd.value = rec.password
+				uni.showToast({ title: '账号已复制，悬浮按钮可切换', icon: 'none', duration: 2000 })
+			}
+		})
+	}
+</script>
+
+<style>
+	.page { display: flex; flex-direction: column; flex: 1; background-color: #F0F6FC; overflow: hidden; }
+	.header { flex-direction: row; align-items: center; padding: 20px 16px; background: #FFFFFF; margin: 12px; border-radius: 14px; box-shadow: 0 2px 10px rgba(91, 155, 213, 0.08); flex-shrink: 0; }
+	.header-icon { width: 48px; height: 48px; border-radius: 24px; background: linear-gradient(135deg, #E8F0FE, #D0E4F7); align-items: center; justify-content: center; margin-right: 14px; overflow: hidden; }
+	.header-img { width: 48px; height: 48px; border-radius: 24px; }
+	.header-emoji { font-size: 24px; }
+	.header-name { font-size: 17px; font-weight: 600; color: #2C3E50; }
+	.header-type-row { flex-direction: row; align-items: center; margin-top: 2px; flex-wrap: nowrap; }
+		.header-type { font-size: 12px; color: #95A5A6; flex-shrink: 0; }
+	.header-url { font-size: 12px; color: #5B9BD5; flex-shrink: 1; lines: 1; margin-left: 4px; }
+	.header-count { font-size: 14px; color: #95A5A6; font-weight: 500; flex-shrink: 0; }
+	.header-right { flex-direction: row; align-items: center; margin-left: auto; margin-right: 28px; flex-shrink: 0; }
+	.header-url-copy { font-size: 12px; color: #5B9BD5; background: #E8F0FE; border-radius: 8px; padding: 3px 8px; text-align: center; margin-right: 4px; }
+	.record-item { background: #FFFFFF; border-radius: 12px; margin-bottom: 8px; padding: 16px 14px; flex-direction: row; align-items: stretch; box-shadow: 0 1px 6px rgba(91, 155, 213, 0.06); position: relative; }
+	.rec-seq { width: 18px; height: 18px; border-radius: 9px; background: #E8F0FE; align-items: center; justify-content: center; margin-right: 8px; margin-top: 3px; flex-shrink: 0; }
+	.seq-num { font-size: 10px; color: #5B9BD5; font-weight: 600; }
+	.rec-text { flex: 1; flex-direction: column; justify-content: center; }
+	.rec-row { flex-direction: row; align-items: center; padding: 4px 0; }
+	.rec-label { font-size: 11px; color: #95A5A6; width: 24px; flex-shrink: 0; }
+	.rec-value { font-size: 14px; color: #2C3E50; font-weight: 500; flex: 1; lines: 1; }
+	.rec-star { font-size: 16px; color: #F39C12; margin-left: 4px; padding: 4px; }
+	.rec-actions { flex-direction: row; align-items: stretch; flex-shrink: 0; margin-left: 6px; }
+	.act-left { flex-direction: column; justify-content: center; }
+	.act-mid { flex-direction: column; justify-content: center; }
+	.act-right { flex-direction: column; justify-content: center; }
+	.act-divider { width: 1px; background: #E8ECF0; margin: 2px 6px; }
+	.rec-gear { font-size: 20px; color: #5B9BD5; padding: 2px 6px; }
+	.rec-gear:active { opacity: 0.7; }
+	.copy-btn { font-size: 12px; color: #5B9BD5; padding: 4px 10px; border: 1px solid #5B9BD5; border-radius: 6px; text-align: center; margin-bottom: 4px; }
+	.copy-btn:last-child { margin-bottom: 0; }
+	.auto-btn { font-size: 13px; color: #E67E22; padding: 11px 7px; border: 1px solid #E67E22; border-radius: 6px; text-align: center; }
+	.add-btn { height: 48px; background: linear-gradient(135deg, #5B9BD5, #4A8BCF); border-radius: 12px; align-items: center; justify-content: center; }
+	.add-btn:active { opacity: 0.85; }
+	.add-btn.disabled { background: #B0C4DE; }
+	.add-btn-text { font-size: 17px; color: #FFFFFF; font-weight: 500; }
+	.input { height: 44px; border: 1px solid #E0E6ED; border-radius: 10px; padding: 0 14px; font-size: 15px; color: #333; background: #F8FAFC; margin-bottom: 12px; }
+	.btn { flex: 1; height: 44px; border-radius: 10px; text-align: center; line-height: 44px; font-size: 16px; font-weight: 500; margin-right: 12px; }
+	.form-title-row { flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+	.form-title { font-size: 18px; font-weight: 600; color: #2C3E50; }
+	.form-close { font-size: 22px; color: #95A5A6; padding: 4px 8px; }
+	.form-desc { font-size: 13px; color: #95A5A6; text-align: center; margin-bottom: 12px; }
+	.form-btns { flex-direction: row; justify-content: space-between; margin-top: 6px; }
+	.btn:last-child { margin-right: 0; }
+	.btn-cancel { background: #F0F2F5; color: #666; }
+	.btn-save { background: #5B9BD5; color: #FFF; }
+	.list-scroll { flex: 1; padding: 0 14px; }
+	.bottom-bar { padding: 12px 16px 30px; flex-shrink: 0; }
+	.empty { padding-top: 80px; align-items: center; }
+	.empty-text { font-size: 16px; color: #B0BEC5; }
+	.empty-sub { font-size: 13px; color: #CFD8DC; margin-top: 6px; }
+		.overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.4); z-index: 200; justify-content: center; align-items: center; }
+		.form-panel { background: #FFFFFF; border-radius: 16px; padding: 24px 20px; width: 85%; max-width: 360px; }
+		.note-content { min-height: 80px; height: 200px; margin-bottom: 12px; }
+		.note-text { font-size: 15px; color: #2C3E50; line-height: 1.5; }
+		.note-textarea { width: 100%; min-height: 100px; border: 1px solid #E0E6ED; border-radius: 10px; padding: 10px; font-size: 15px; color: #333; background: #F8FAFC; margin-bottom: 12px; }
+		.btn-delete { background: #E74C3C; color: #FFF; }
+</style>

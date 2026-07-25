@@ -1,0 +1,232 @@
+let windowManager: android.view.WindowManager | null = null
+let floatingView: android.widget.TextView | null = null
+let containerView: android.widget.FrameLayout | null = null
+let layoutParams: android.view.WindowManager.LayoutParams | null = null
+let currentLabel = "账号"
+let storedAccount = ""
+let storedPassword = ""
+let storedUrl = ""
+let dragStartX: number = 0.0
+let dragStartY: number = 0.0
+let dragInitX = 0
+let dragInitY = 0
+let isDragging = false
+let lastClickTime: number = 0.0
+let pendingActivity: android.app.Activity | null = null
+
+function getPrefs(ctx: android.content.Context): android.content.SharedPreferences {
+	return ctx.getSharedPreferences("float_data", 0)
+}
+
+function writeClipboard(ctx: android.content.Context, text: string): void {
+	const cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+	if (cm != null) {
+		cm.setPrimaryClip(android.content.ClipData.newPlainText("", text))
+	}
+}
+
+function copyByPathB(text: string): void {
+	// 始终先存到 prefs（即使无法切屏，下次打开 app 也会走 onPageShow 拾取）
+	try {
+		const ctx = pendingActivity != null ? (pendingActivity as android.content.Context) : UTSAndroid.getUniActivity()
+		if (ctx != null) {
+			getPrefs(ctx).edit().putString("data", text).apply()
+			// 尝试切屏（国产 ROM 拦截 startActivity 也无所谓，数据已在 prefs）
+			try {
+				const launchIntent = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName())
+				if (launchIntent != null) {
+					launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+					ctx.startActivity(launchIntent)
+				}
+			} catch (_) {}
+		}
+	} catch (e) {
+		console.error("copyByPathB failed: " + e)
+	}
+}
+
+class DragTouchDelegate extends android.view.View.OnTouchListener {
+	override onTouch(v: android.view.View, event: android.view.MotionEvent): boolean {
+		const action = event.getAction()
+		if (action == android.view.MotionEvent.ACTION_DOWN) {
+			dragStartX = event.getRawX()
+			dragStartY = event.getRawY()
+			dragInitX = layoutParams != null ? (layoutParams as android.view.WindowManager.LayoutParams).x : 0
+			dragInitY = layoutParams != null ? (layoutParams as android.view.WindowManager.LayoutParams).y : 0
+			isDragging = false
+			return true
+		} else if (action == android.view.MotionEvent.ACTION_MOVE) {
+			const dx = Math.abs(event.getRawX() - dragStartX)
+			const dy = Math.abs(event.getRawY() - dragStartY)
+			if (dx > 10 || dy > 10) {
+				isDragging = true
+				setWindowPosition(dragInitX + Math.round(event.getRawX() - dragStartX), dragInitY + Math.round(event.getRawY() - dragStartY))
+			}
+			return true
+		} else if (action == android.view.MotionEvent.ACTION_UP) {
+			if (!isDragging) {
+				v.performClick()
+			}
+			return true
+		}
+		return false
+	}
+}
+
+class CloseClickDelegate extends android.view.View.OnClickListener {
+	override onClick(v: android.view.View): void {
+		hideFloatingButton()
+		uni.exit()
+	}
+}
+
+class FloatClickDelegate extends android.view.View.OnClickListener {
+	override onClick(v: android.view.View): void {
+		const now = Date.now()
+		if (now - lastClickTime < 1500) return
+		lastClickTime = now
+		let text = ""
+		if (storedUrl.length > 0) {
+			text = currentLabel == "网址" ? storedAccount : (currentLabel == "账号" ? storedPassword : storedUrl)
+			currentLabel = currentLabel == "网址" ? "账号" : (currentLabel == "账号" ? "密码" : "网址")
+		} else {
+			text = currentLabel == "账号" ? storedPassword : storedAccount
+			currentLabel = currentLabel == "账号" ? "密码" : "账号"
+		}
+		// 直接投递给 prefs，try startActivity
+		copyByPathB(text)
+		if (floatingView != null) {
+			(floatingView as android.widget.TextView).setText(currentLabel)
+		}
+	}
+}
+
+function getWindowManager(): android.view.WindowManager {
+	if (windowManager != null) return windowManager as android.view.WindowManager
+	const activity = UTSAndroid.getUniActivity()
+	const wm = activity?.getSystemService(android.content.Context.WINDOW_SERVICE)
+	windowManager = wm as android.view.WindowManager
+	return windowManager as android.view.WindowManager
+}
+
+function createLayoutParams(): android.view.WindowManager.LayoutParams {
+	const lp = new android.view.WindowManager.LayoutParams()
+	lp.type = android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+	lp.format = android.graphics.PixelFormat.RGBA_8888
+	lp.flags = android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+		android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+		android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+	lp.gravity = android.view.Gravity.TOP | android.view.Gravity.START
+	lp.width = 380
+	lp.height = 280
+	const activity = UTSAndroid.getUniActivity()
+	if (activity != null) {
+		const dm = activity.getResources().getDisplayMetrics()
+		lp.x = Math.round((dm.widthPixels - 380) / 2).toInt() + 300
+		lp.y = Math.round(dm.heightPixels / 5).toInt()
+	}
+	return lp
+}
+
+function setWindowPosition(x: number, y: number): void {
+	if (containerView == null || layoutParams == null) return
+	const wm = getWindowManager()
+	const lp = new android.view.WindowManager.LayoutParams()
+	lp.copyFrom(layoutParams as android.view.WindowManager.LayoutParams)
+	lp.x = Math.round(x).toInt()
+	lp.y = Math.round(y).toInt()
+	layoutParams = lp
+	wm.updateViewLayout(containerView as android.view.View, lp as android.view.ViewGroup.LayoutParams)
+}
+
+export function showFloatingButton(account: string, password: string, url: string = ""): void {
+	storedAccount = account
+	storedPassword = password
+	storedUrl = url
+	currentLabel = url.length > 0 ? "网址" : "账号"
+	const activity = UTSAndroid.getUniActivity()
+	if (activity == null) return
+	pendingActivity = activity
+	// 初始同步：剪贴板写入（前台一定能写）
+	try {
+		writeClipboard(activity, storedUrl.length > 0 ? storedUrl : storedAccount)
+	} catch (_) {
+		copyByPathB(storedUrl.length > 0 ? storedUrl : storedAccount)
+	}
+	if (floatingView != null) {
+		(floatingView as android.widget.TextView).setText(currentLabel)
+		return
+	}
+	layoutParams = createLayoutParams()
+
+	const container = new android.widget.FrameLayout(activity)
+
+	const ll = new android.widget.LinearLayout(activity)
+	ll.setOrientation(android.widget.LinearLayout.VERTICAL)
+	ll.setGravity(android.view.Gravity.CENTER)
+
+	const tv = new android.widget.TextView(activity)
+	tv.setText(currentLabel)
+	tv.setTextColor(0xFF000000.toInt())
+	tv.setGravity(android.view.Gravity.CENTER)
+	tv.setTypeface(null, android.graphics.Typeface.BOLD)
+	const shape = new android.graphics.drawable.GradientDrawable()
+	shape.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE)
+	shape.setStroke(3, 0xFF5B9BD5.toInt())
+	shape.setColor(0x66ADD8E6.toInt())
+	tv.setBackground(shape as android.graphics.drawable.Drawable)
+	tv.setOnClickListener(new FloatClickDelegate() as android.view.View.OnClickListener)
+	tv.setOnTouchListener(new DragTouchDelegate() as android.view.View.OnTouchListener)
+	const tvLlParams = new android.widget.LinearLayout.LayoutParams(250, 150)
+	ll.addView(tv as android.view.View, tvLlParams as android.view.ViewGroup.LayoutParams)
+
+	const llFrameParams = new android.widget.FrameLayout.LayoutParams(-2, -2)
+	llFrameParams.gravity = android.view.Gravity.CENTER
+	container.addView(ll as android.view.View, llFrameParams as android.view.ViewGroup.LayoutParams)
+
+	const closeBtn = new android.widget.TextView(activity)
+	closeBtn.setText("✕")
+	closeBtn.setTextColor(0xFFFFFFFF.toInt())
+	closeBtn.setGravity(android.view.Gravity.CENTER)
+	closeBtn.setTypeface(null, android.graphics.Typeface.BOLD)
+	closeBtn.setOnClickListener(new CloseClickDelegate() as android.view.View.OnClickListener)
+	const closeBg = new android.graphics.drawable.GradientDrawable()
+	closeBg.setShape(android.graphics.drawable.GradientDrawable.OVAL)
+	closeBg.setColor(0xCCE74C3C.toInt())
+	closeBtn.setBackground(closeBg as android.graphics.drawable.Drawable)
+	const closeParams = new android.widget.FrameLayout.LayoutParams(86, 86)
+	closeParams.gravity = android.view.Gravity.TOP | android.view.Gravity.END
+	container.addView(closeBtn as android.view.View, closeParams as android.view.ViewGroup.LayoutParams)
+
+	containerView = container
+	floatingView = tv
+	const selfLayoutParams = layoutParams
+	const wm = getWindowManager()
+	wm.addView(container as android.view.View, selfLayoutParams as android.view.ViewGroup.LayoutParams)
+}
+
+export function hideFloatingButton(): void {
+	if (containerView != null) {
+		(getWindowManager() as android.view.WindowManager).removeView(containerView as android.view.View)
+		containerView = null
+		floatingView = null
+		layoutParams = null
+	}
+}
+
+export function hasOverlayPermission(): boolean {
+	const activity = UTSAndroid.getUniActivity()
+	if (activity == null) return false
+	return android.provider.Settings.canDrawOverlays(activity)
+}
+
+export function requestOverlayPermission(): void {
+	const activity = UTSAndroid.getUniActivity()
+	if (activity == null) return
+	const intent = new android.content.Intent(
+		android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+		android.net.Uri.parse("package:" + activity.getPackageName())
+	)
+	intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+	activity.startActivity(intent)
+}

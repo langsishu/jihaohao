@@ -1,0 +1,822 @@
+<template>
+	<view class="page">
+		<view class="search-bar">
+			<text class="search-icon">🔍</text>
+			<input v-model="searchText" placeholder="搜索名称..." class="search-input" type="text" />
+			<text v-if="searchText.length > 0" class="search-clear" @click="searchText = ''">×</text>
+		</view>
+
+		<view class="toolbar">
+			<text class="toolbar-count">共 {{ filteredList.length }} 项</text>
+			<view class="toolbar-right">
+				<text class="toolbar-btn" @click="showExportImport">导出/导入</text>
+				<text class="toolbar-mode" @click="toggleViewMode">{{ viewMode == 'navigate' ? '▸ 跳转样式' : '▼ 展开样式' }}</text>
+			</view>
+		</view>
+
+		<scroll-view class="list-scroll" scroll-y="true">
+			<view class="list" v-if="filteredList.length > 0">
+				<template v-for="(item, index) in filteredList" :key="item.id">
+					<view
+						class="list-item"
+						@click="onItemClick(item)"
+					>
+						<view class="item-seq"><text class="seq-num">{{ index + 1 }}</text></view>
+						<view class="item-icon">
+							<image v-if="item.customIcon.length > 0" :src="item.customIcon" class="item-img" />
+							<text v-else class="item-emoji">{{ typeIcon(item.type) }}</text>
+						</view>
+						<view class="item-info">
+							<text class="item-name">{{ item.name }}</text>
+							<view class="item-type-row">
+								<text class="item-type">{{ typeLabel(item) }}</text>
+								<text v-if="item.type == 'website' && item.url != null && item.url.length > 0" class="item-url">{{ item.url }}</text>
+							</view>
+						</view>
+						<view class="item-right">
+							<text v-if="item.type == 'website' && item.url != null && item.url.length > 0" class="item-url-copy" @click.stop="copyText(item.url)">📋</text>
+							<text class="item-count">{{ item.records.length }}/10</text>
+							<text class="item-gear" @click.stop="onCategoryMenu(item)">⚙</text>
+						</view>
+					</view>
+					<view v-if="viewMode == 'expand' && expandedId == item.id" class="expand-panel">
+						<view v-for="(rec, ri) in item.records" :key="rec.id" class="expand-record">
+							<view class="rec-seq"><text class="seq-num">{{ ri + 1 }}</text></view>
+							<view class="rec-text">
+								<view class="rec-row"><text class="rec-label">账号</text><text class="rec-value">{{ rec.account }}<text v-if="rec.remark.length > 0" class="rec-star" @click.stop="openNote(item, rec)">★</text></text></view>
+								<view class="rec-row"><text class="rec-label">密码</text><text class="rec-value">{{ rec.password }}</text></view>
+							</view>
+							<view class="rec-actions">
+								<view class="act-left">
+									<text class="copy-btn" @click.stop="copyText(rec.account)">复制</text>
+									<text class="copy-btn" @click.stop="copyText(rec.password)">复制</text>
+								</view>
+								<view class="act-divider" />
+								<view class="act-mid">
+									<text class="rec-gear" @click.stop="onExpandRecordMenu(item, rec)">⚙</text>
+								</view>
+								<view class="act-divider" />
+								<view class="act-right">
+									<text class="auto-btn" @click.stop="expandQuickLogin(item, rec)">🚀 一键</text>
+								</view>
+							</view>
+						</view>
+						<view class="expand-add" :class="{ disabled: item.records.length >= 10 }" @click="expandAddRecord(item)">
+							<text class="expand-add-text">+ 新增账号</text>
+						</view>
+					</view>
+				</template>
+			</view>
+
+			<view class="empty" v-else>
+				<text class="empty-text">{{ searchText.length > 0 ? '没有找到匹配的项' : '还没有记录' }}</text>
+				<text class="empty-sub">{{ searchText.length > 0 ? '换个关键词试试' : '点击右下角 + 按钮添加' }}</text>
+			</view>
+		</scroll-view>
+
+		<view class="fab" @click="showAddMenu">
+			<text class="fab-icon">+</text>
+		</view>
+
+		<view class="overlay" v-if="showForm" @click="closeForm">
+			<view class="form-panel" @click.stop>
+				<text class="form-title">{{ editingItemId.length > 0 ? '编辑' : '添加' }}{{ typeName }}</text>
+				<view class="form-type-select">
+					<view v-for="t in types" :key="t.value" class="type-option" :class="{ active: isFormActive(t) }" @click="setFormType(t)">
+						<text class="type-option-text" :class="{ active: isFormActive(t) }">{{ t.label }}</text>
+					</view>
+				</view>
+				<input v-if="isOtherForm" v-model="formCustomType" placeholder="自定义分类名" class="input" type="text" />
+				<input v-model="formName" placeholder="名称" class="input" type="text" />
+				<input v-if="isWebsiteForm" v-model="formUrl" placeholder="网址 (https://...)" class="input" type="text" />
+				<template v-if="editingItemId.length == 0">
+				<input v-model="formAccount" placeholder="账号" class="input" type="text" />
+				<input v-model="formPassword" placeholder="密码" class="input" type="text" />
+				</template>
+				<view class="form-btns">
+					<text class="btn btn-cancel" @click="closeForm">取消</text>
+					<text class="btn btn-save" @click="saveCategory">保存</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="overlay" v-if="showEI" @click="closeEI">
+			<view class="form-panel ei-panel" @click.stop>
+				<text class="form-title">数据管理</text>
+				<view class="ei-btns">
+					<text class="btn" :class="eiModeExport ? 'btn-save' : 'btn-cancel'" @click="doExport">📤 导出数据</text>
+					<text class="btn" :class="eiModeExport ? 'btn-cancel' : 'btn-save'" @click="doImport">📥 导入数据</text>
+				</view>
+				<textarea v-model="eiText" class="ei-textarea" placeholder="导出时数据会显示在这里，导入时把数据粘贴到这里" :style="{ height: hasEiText ? '200px' : '80px' }" />
+				<text class="btn btn-save" @click="doImportFromText" v-if="hasEiText && !eiModeExport">✅ 确认导入</text>
+				<text class="btn btn-cancel" style="margin-top:10px;" @click="closeEI">关闭</text>
+			</view>
+		</view>
+
+		<view class="overlay" v-if="showMoveForm" @click="closeMoveForm">
+			<view class="form-panel" @click.stop>
+				<text class="form-title">移动位置</text>
+				<text class="form-desc">当前位置: {{ currentMovePos }}  →  输入目标位置 (1-{{ moveRangeMax }})</text>
+				<input v-model="moveTargetPos" placeholder="目标位置" class="input" type="text" />
+				<view class="form-btns">
+					<text class="btn btn-cancel" @click="closeMoveForm">取消</text>
+					<text class="btn btn-save" @click="confirmMove">确定</text>
+				</view>
+			</view>
+		</view>
+		<view class="overlay" v-if="showRecEdit" @click="closeRecEdit">
+			<view class="form-panel" @click.stop>
+				<text class="form-title">{{ isRecEditNew ? '新增账号' : '编辑记录' }}</text>
+				<input v-model="recEditAccount" placeholder="账号" class="input" type="text" />
+				<input v-model="recEditPassword" placeholder="密码" class="input" type="text" />
+				<view class="form-btns">
+					<text class="btn btn-cancel" @click="closeRecEdit">取消</text>
+					<text class="btn btn-save" @click="saveRecEdit">保存</text>
+				</view>
+			</view>
+		</view>
+
+		<view class="overlay" v-if="showNote" @click="closeNote">
+			<view class="form-panel" @click.stop>
+				<view class="form-title-row">
+					<text class="form-title">备注</text>
+					<text class="form-close" @click="closeNote">✕</text>
+				</view>
+				<scroll-view v-if="!noteEditing" scroll-y="true" class="note-content">
+					<text class="note-text">{{ noteDisplayText }}</text>
+				</scroll-view>
+				<textarea v-else v-model="noteText" class="note-textarea" placeholder="输入备注内容..." />
+				<view class="form-btns">
+					<template v-if="!noteEditing">
+						<text class="btn btn-delete" @click="deleteNote">删除</text>
+						<text class="btn btn-save" @click="editNote">编辑</text>
+					</template>
+					<template v-else>
+						<text class="btn btn-cancel" @click="cancelEditNote">取消</text>
+						<text class="btn btn-save" @click="saveNote">保存</text>
+					</template>
+				</view>
+			</view>
+		</view>
+	</view>
+</template>
+
+<script setup lang="uts">
+	// #ifdef APP-ANDROID
+	import { showFloatingButton, hasOverlayPermission, requestOverlayPermission } from '@/utssdk/app-android/index'
+	// #endif
+
+	class RecordItem {
+		id: string = ''
+		account: string = ''
+		password: string = ''
+		remark: string = ''
+		constructor(id: string = '', account: string = '', password: string = '', remark: string = '') {
+			this.id = id
+			this.account = account
+			this.password = password
+			this.remark = remark
+		}
+	}
+
+	class Category {
+		id: string = ''
+		name: string = ''
+		type: string = ''
+		url: string = ''
+		records: RecordItem[] = []
+		order: number = 0
+		customIcon: string = ''
+		customType: string = ''
+	}
+
+	class TypeOption {
+		label: string = ''
+		value: string = ''
+		constructor(label: string, value: string) {
+			this.label = label
+			this.value = value
+		}
+	}
+
+	const types = [
+		new TypeOption('📱 应用', 'app'),
+		new TypeOption('🌐 网站', 'website'),
+		new TypeOption('📄 其他', 'other')
+	]
+
+	const list = ref<Category[]>([])
+	const searchText = ref('')
+	const showForm = ref(false)
+	const showEI = ref(false)
+	const eiText = ref('')
+	const eiModeExport = ref(true)
+	const showMoveForm = ref(false)
+	const moveTargetPos = ref('')
+	const movingItemId = ref('')
+	const currentMovePos = ref(0)
+	const editingItemId = ref('')
+	const viewMode = ref('expand')
+	const savedMode = uni.getStorageSync('_viewMode')
+	if (savedMode != null && (savedMode as string).length > 0) {
+		viewMode.value = savedMode as string
+	}
+	const expandedId = ref('')
+	const showRecEdit = ref(false)
+	const recEditAccount = ref('')
+	const recEditPassword = ref('')
+	const isRecEditNew = ref(false)
+	const editingRecCatId = ref('')
+	const editingRecId = ref('')
+
+	const showNote = ref(false)
+	const noteEditing = ref(false)
+	const noteText = ref('')
+	const noteCatId = ref('')
+	const noteRecId = ref('')
+
+	function replaceCategoryInList(updated: Category): void {
+		const idx = list.value.findIndex(x => x.id == updated.id)
+		if (idx < 0) return
+		const nl: Category[] = []
+		for (let i = 0; i < list.value.length; i++) { nl.push(list.value[i]) }
+		nl[idx] = updated
+		list.value = nl
+	}
+
+	const moveRangeMax = computed(() => {
+		if (editingRecCatId.value.length > 0) {
+			const cat = list.value.find(x => x.id == editingRecCatId.value)
+			if (cat != null) return cat.records.length
+		}
+		return list.value.length
+	})
+
+	const formType = ref('app')
+	const formName = ref('')
+	const formAccount = ref('')
+	const formPassword = ref('')
+	const formUrl = ref('')
+	const formCustomType = ref('')
+	const isWebsiteForm = computed(() => formType.value == 'website')
+	const isOtherForm = computed(() => formType.value == 'other')
+
+	const hasEiText = computed(() => eiText.value.length > 0)
+
+	const typeName = computed(() => {
+		const t = types.find(x => x.value == formType.value)
+		if (t != null) return t.label
+		return ''
+	})
+
+	const noteDisplayText = computed(() => {
+			if (noteCatId.value.length == 0 || noteRecId.value.length == 0) return ''
+			const c = list.value.find(x => x.id == noteCatId.value)
+			if (c == null) return ''
+			const r = c.records.find(x => x.id == noteRecId.value)
+			if (r == null) return ''
+			return r.remark.length > 0 ? r.remark : '暂无备注'
+		})
+
+		const filteredList = computed<Category[]>(() => {
+		if (searchText.value.trim().length == 0) return list.value
+		const keyword = searchText.value.trim().toLowerCase()
+		return list.value.filter(x => x.name.toLowerCase().indexOf(keyword) >= 0)
+	})
+
+	function setFormType(t: TypeOption) { formType.value = t.value }
+	function isFormActive(t: TypeOption): boolean { return formType.value == t.value }
+	function typeIcon(type: string): string { if (type == 'app') return '📱'; if (type == 'website') return '🌐'; return '📄' }
+	function typeLabel(cat: Category): string {
+		if (cat.type == 'app') return '应用'
+		if (cat.type == 'website') return '网站'
+		if (cat.customType.length > 0) return cat.customType
+		return '其他'
+	}
+
+	function categoryToStorage(cat: Category): UTSJSONObject {
+		const recs: UTSJSONObject[] = []
+		for (let i = 0; i < cat.records.length; i++) {
+			const r = cat.records[i]
+			recs.push({ id: r.id, account: r.account, password: r.password, remark: r.remark } as UTSJSONObject)
+		}
+		return { id: cat.id, name: cat.name, type: cat.type, url: cat.url, records: recs, order: cat.order, customIcon: cat.customIcon, customType: cat.customType } as UTSJSONObject
+	}
+
+	function storageToCategory(obj: UTSJSONObject): Category {
+		const cat = new Category()
+		cat.id = obj['id'] as string; cat.name = obj['name'] as string; cat.type = obj['type'] as string
+		const urlVal = obj['url']; cat.url = urlVal != null ? (urlVal as string) : ''
+		const orderVal = obj['order']; cat.order = orderVal != null ? (orderVal as number) : 0
+		const iconVal = obj['customIcon']; cat.customIcon = iconVal != null ? (iconVal as string) : ''
+		const ctVal = obj['customType']; cat.customType = ctVal != null ? (ctVal as string) : ''
+		const recs = obj['records'] as UTSJSONObject[]
+		if (recs != null) { for (let j = 0; j < recs.length; j++) { const r = recs[j]; const rRemark = r['remark']; cat.records.push(new RecordItem(r['id'] as string, r['account'] as string, r['password'] as string, rRemark != null ? (rRemark as string) : '')) } }
+		return cat
+	}
+
+	function loadData() {
+		try {
+			const raw = uni.getStorageSync('categories')
+			if (raw != null && typeof raw != 'string') {
+				const arr = raw as UTSJSONObject[]
+				list.value = []
+				for (let i = 0; i < arr.length; i++) { list.value.push(storageToCategory(arr[i])) }
+			} else { list.value = [] }
+		} catch (e) { list.value = [] }
+	}
+
+	function genId(): string { return Date.now().toString(36) + Math.random().toString(36).substring(2, 8) }
+
+	function saveData() {
+		const arr: UTSJSONObject[] = []
+		for (let i = 0; i < list.value.length; i++) { arr.push(categoryToStorage(list.value[i])) }
+		uni.setStorageSync('categories', arr)
+	}
+
+	function showAddMenu() {
+		uni.showActionSheet({
+			itemList: ['📱 应用', '🌐 网站', '📄 其他'],
+			success: (res) => {
+				formType.value = ['app', 'website', 'other'][res.tapIndex]
+				formName.value = ''; formAccount.value = ''; formPassword.value = ''; formUrl.value = ''; formCustomType.value = ''
+				editingItemId.value = ''
+				showForm.value = true
+			}
+		})
+	}
+
+	function closeForm() { showForm.value = false; editingItemId.value = '' }
+
+	function saveCategory() {
+		if (formName.value.trim().length == 0) { uni.showToast({ title: '请输入名称', icon: 'none' }); return }
+		if (editingItemId.value.length > 0) {
+			const found = list.value.find(x => x.id == editingItemId.value)
+			if (found != null) {
+				found.name = formName.value.trim(); found.type = formType.value; found.url = formUrl.value.trim()
+				found.customType = formCustomType.value.trim()
+				saveData(); closeForm()
+				uni.showToast({ title: '修改成功', icon: 'success' })
+			}
+			return
+		}
+		if (formAccount.value.trim().length == 0) { uni.showToast({ title: '请输入账号', icon: 'none' }); return }
+		if (formPassword.value.trim().length == 0) { uni.showToast({ title: '请输入密码', icon: 'none' }); return }
+		const cat = new Category()
+		cat.id = genId(); cat.name = formName.value.trim(); cat.type = formType.value
+		cat.url = formUrl.value.trim(); cat.order = list.value.length
+		cat.customType = formCustomType.value.trim()
+		cat.records = [new RecordItem(genId(), formAccount.value.trim(), formPassword.value.trim())]
+		list.value.push(cat)
+		saveData(); closeForm()
+		uni.showToast({ title: '添加成功', icon: 'success' })
+	}
+
+	function deleteCategory(item: Category) {
+		uni.showModal({
+			title: '删除确认', content: `确定删除「${item.name}」吗？`,
+			success: (res) => { if (res.confirm) { list.value = list.value.filter(x => x.id !== item.id); saveData(); uni.showToast({ title: '已删除', icon: 'success' }) } }
+		})
+	}
+
+	function moveCategoryTo(fromIdx: number, toIdx: number) {
+		if (fromIdx < 0 || toIdx < 0 || fromIdx >= list.value.length || toIdx >= list.value.length) return
+		if (fromIdx == toIdx) return
+		const newList: Category[] = []
+		const item = list.value[fromIdx]
+		for (let i = 0; i < list.value.length; i++) {
+			if (i == fromIdx) continue
+			newList.push(list.value[i])
+		}
+		newList.splice(toIdx, 0, item)
+		list.value = newList
+		saveData()
+	}
+
+	function changeIcon(item: Category) {
+		uni.chooseImage({
+			count: 1,
+			sizeType: ['compressed'],
+			sourceType: ['album'],
+			success: (res) => {
+				const paths = res.tempFilePaths
+				if (paths != null && paths.length > 0) {
+					item.customIcon = paths[0]
+					replaceCategoryInList(item)
+					saveData()
+					uni.showToast({ title: '图标已更新', icon: 'success' })
+				}
+			}
+		})
+	}
+
+	function onCategoryMenu(item: Category) {
+		const idx = list.value.findIndex(x => x.id == item.id)
+		const opts: string[] = ['🗑 删除']
+		opts.push('✏️ 编辑')
+		opts.push('🖼 更改图标')
+		if (idx > 0) opts.push('⬆ 上移')
+		if (idx < list.value.length - 1) opts.push('⬇ 下移')
+		opts.push('📌 移至指定位置')
+		uni.showActionSheet({
+			itemList: opts,
+			success: (res) => {
+				const label = opts[res.tapIndex]
+				if (label == '🗑 删除') deleteCategory(item)
+				else if (label == '✏️ 编辑') {
+					editingItemId.value = item.id
+					formName.value = item.name; formType.value = item.type; formUrl.value = item.url
+					formCustomType.value = item.customType
+					formAccount.value = ''; formPassword.value = ''
+					showForm.value = true
+				}
+				else if (label == '🖼 更改图标') changeIcon(item)
+				else if (label == '⬆ 上移') moveCategoryTo(idx, idx - 1)
+				else if (label == '⬇ 下移') moveCategoryTo(idx, idx + 1)
+				else if (label == '📌 移至指定位置') {
+					editingRecCatId.value = ''
+					movingItemId.value = item.id
+					moveTargetPos.value = ''
+					currentMovePos.value = idx + 1
+					showMoveForm.value = true
+				}
+			}
+		})
+	}
+
+	function closeMoveForm() { showMoveForm.value = false }
+
+	function swapRecordToPosition(cat: Category, fromIdx: number, toIdx: number): void {
+		if (fromIdx < 0 || toIdx < 0 || fromIdx >= cat.records.length || toIdx >= cat.records.length) return
+		if (fromIdx == toIdx) return
+		const newRecs: RecordItem[] = []
+		const item = cat.records[fromIdx]
+		for (let i = 0; i < cat.records.length; i++) { if (i == fromIdx) continue; newRecs.push(cat.records[i]) }
+		newRecs.splice(toIdx, 0, item)
+		cat.records = newRecs
+		replaceCategoryInList(cat)
+		saveData()
+	}
+
+	function confirmMove() {
+		const posStr = moveTargetPos.value.trim()
+		if (posStr.length == 0) { uni.showToast({ title: '请输入位置', icon: 'none' }); return }
+		const pos = parseInt(posStr)
+		if (editingRecCatId.value.length > 0) {
+			const cat = list.value.find(x => x.id == editingRecCatId.value)
+			if (cat == null || pos < 1 || pos > cat.records.length) { uni.showToast({ title: '位置超出范围', icon: 'none' }); return }
+			const fromIdx = cat.records.findIndex(x => x.id == editingRecId.value)
+			if (fromIdx < 0) { closeMoveForm(); return }
+			swapRecordToPosition(cat, fromIdx, pos - 1)
+			editingRecCatId.value = ''
+			editingRecId.value = ''
+		} else {
+			if (pos < 1 || pos > list.value.length) { uni.showToast({ title: '位置超出范围', icon: 'none' }); return }
+			const fromIdx = list.value.findIndex(x => x.id == movingItemId.value)
+			if (fromIdx < 0) { closeMoveForm(); return }
+			moveCategoryTo(fromIdx, pos - 1)
+		}
+		closeMoveForm()
+		uni.showToast({ title: '已移动', icon: 'success' })
+	}
+
+	function expandAddRecord(cat: Category): void {
+		if (cat.records.length >= 10) { uni.showToast({ title: '每个模块最多10条', icon: 'none' }); return }
+		editingRecCatId.value = cat.id
+		editingRecId.value = ''
+		recEditAccount.value = ''
+		recEditPassword.value = ''
+		isRecEditNew.value = true
+		showRecEdit.value = true
+	}
+
+	function openRecordEdit(cat: Category, rec: RecordItem): void {
+		editingRecCatId.value = cat.id
+		editingRecId.value = rec.id
+		recEditAccount.value = rec.account
+		recEditPassword.value = rec.password
+		isRecEditNew.value = false
+		showRecEdit.value = true
+	}
+
+	function closeRecEdit(): void {
+		showRecEdit.value = false
+	}
+
+	function openNote(cat: Category, rec: RecordItem): void {
+		noteCatId.value = cat.id
+		noteRecId.value = rec.id
+		noteEditing.value = false
+		noteText.value = rec.remark
+		showNote.value = true
+	}
+
+	function closeNote(): void {
+		showNote.value = false
+		noteEditing.value = false
+	}
+
+	function editNote(): void {
+		const c = list.value.find(x => x.id == noteCatId.value)
+		if (c == null) return
+		const r = c.records.find(x => x.id == noteRecId.value)
+		if (r == null) return
+		noteText.value = r.remark
+		noteEditing.value = true
+	}
+
+	function cancelEditNote(): void {
+		noteEditing.value = false
+	}
+
+	function saveNote(): void {
+		const cat = list.value.find(x => x.id == noteCatId.value)
+		if (cat == null) return
+		const rec = cat.records.find(x => x.id == noteRecId.value)
+		if (rec == null) return
+		rec.remark = noteText.value.trim()
+		replaceCategoryInList(cat)
+		saveData()
+		noteEditing.value = false
+		uni.showToast({ title: '备注已保存', icon: 'success' })
+	}
+
+	function deleteNote(): void {
+		const cat = list.value.find(x => x.id == noteCatId.value)
+		if (cat == null) return
+		const rec = cat.records.find(x => x.id == noteRecId.value)
+		if (rec == null) return
+		rec.remark = ''
+		replaceCategoryInList(cat)
+		saveData()
+		showNote.value = false
+		uni.showToast({ title: '备注已删除', icon: 'success' })
+	}
+
+	function saveRecEdit(): void {
+		const cat = list.value.find(x => x.id == editingRecCatId.value)
+		if (cat == null) return
+		if (isRecEditNew.value) {
+			const newRecs: RecordItem[] = []
+			for (let i = 0; i < cat.records.length; i++) { newRecs.push(cat.records[i]) }
+			newRecs.push(new RecordItem(genId(), recEditAccount.value.trim(), recEditPassword.value.trim()))
+			cat.records = newRecs
+		} else {
+			const rec = cat.records.find(x => x.id == editingRecId.value)
+			if (rec == null) return
+			rec.account = recEditAccount.value.trim()
+			rec.password = recEditPassword.value.trim()
+		}
+		replaceCategoryInList(cat)
+		saveData()
+		closeRecEdit()
+		uni.showToast({ title: '已保存', icon: 'success' })
+	}
+
+	function deleteRecordItem(cat: Category, rec: RecordItem): void {
+		uni.showModal({
+			title: '删除确认',
+			content: '确定删除这条记录吗？',
+			success: (res) => {
+				if (res.confirm) {
+					cat.records = cat.records.filter(x => x.id !== rec.id)
+						replaceCategoryInList(cat)
+					saveData()
+					uni.showToast({ title: '已删除', icon: 'success' })
+				}
+			}
+		})
+	}
+
+	function swapRecordItems(cat: Category, a: number, b: number): void {
+		const newRecs: RecordItem[] = []
+		for (let i = 0; i < cat.records.length; i++) { newRecs.push(cat.records[i]) }
+		const tmp = newRecs[a]; newRecs[a] = newRecs[b]; newRecs[b] = tmp
+		cat.records = newRecs
+		replaceCategoryInList(cat)
+		saveData()
+	}
+
+	function onExpandRecordMenu(cat: Category, rec: RecordItem): void {
+		const idx = cat.records.findIndex(x => x.id == rec.id)
+		const opts: string[] = ['📝 备注', '✏️ 编辑', '🗑 删除']
+		if (idx > 0) opts.push('⬆ 上移')
+		if (idx < cat.records.length - 1) opts.push('⬇ 下移')
+		opts.push('📌 移至指定位置')
+		uni.showActionSheet({
+			itemList: opts,
+			success: (res) => {
+				const label = opts[res.tapIndex]
+				if (label == '📝 备注') openNote(cat, rec)
+				else if (label == '✏️ 编辑') openRecordEdit(cat, rec)
+				else if (label == '🗑 删除') deleteRecordItem(cat, rec)
+				else if (label == '⬆ 上移') swapRecordItems(cat, idx, idx - 1)
+				else if (label == '⬇ 下移') swapRecordItems(cat, idx, idx + 1)
+				else if (label == '📌 移至指定位置') {
+					editingRecCatId.value = cat.id
+					editingRecId.value = rec.id
+					moveTargetPos.value = ''
+					currentMovePos.value = idx + 1
+					showMoveForm.value = true
+				}
+			}
+		})
+	}
+
+	function proceedQuickLogin(rec: RecordItem, url: string = ""): void {
+		uni.setClipboardData({
+			data: rec.account,
+			success: () => {
+				// #ifdef APP-ANDROID
+				showFloatingButton(rec.account, rec.password, url)
+				UTSAndroid.getUniActivity()?.moveTaskToBack(true)
+				// #endif
+				uni.showToast({ title: '账号已复制', icon: 'none', duration: 2000 })
+			}
+		})
+	}
+
+	function expandQuickLogin(item: Category, rec: RecordItem): void {
+		// #ifdef APP-ANDROID
+		if (!hasOverlayPermission()) {
+			uni.showModal({
+				title: '需要悬浮窗权限',
+				content: '请在设置中开启"显示在其他应用上层"权限',
+				success: (res) => { if (res.confirm) requestOverlayPermission() }
+			})
+			return
+		}
+		// #endif
+		proceedQuickLogin(rec, item.url)
+	}
+
+
+	function copyText(text: string): void {
+		uni.setClipboardData({ data: text, success: () => { uni.showToast({ title: '已复制', icon: 'success' }) } })
+	}
+
+	function goDetail(item: Category) {
+		uni.setStorageSync('_curCat', categoryToStorage(item))
+		uni.navigateTo({ url: '/pages/detail/detail' })
+	}
+
+	function toggleViewMode(): void {
+		viewMode.value = viewMode.value == 'navigate' ? 'expand' : 'navigate'
+		uni.setStorageSync('_viewMode', viewMode.value)
+		expandedId.value = ''
+	}
+
+	function onItemClick(item: Category): void {
+		if (viewMode.value == 'expand') {
+			if (expandedId.value == item.id) {
+				expandedId.value = ''
+			} else {
+				expandedId.value = item.id
+			}
+		} else {
+			goDetail(item)
+		}
+	}
+
+	function showExportImport() { eiText.value = ''; eiModeExport.value = true; showEI.value = true }
+	function closeEI() { showEI.value = false; eiText.value = '' }
+
+	function doExport() {
+		const raw = uni.getStorageSync('categories')
+		if (raw == null || (typeof raw == 'string' && (raw as string).length == 0)) { uni.showToast({ title: '暂无数据', icon: 'none' }); return }
+		eiText.value = JSON.stringify(raw); eiModeExport.value = true
+		uni.showToast({ title: '数据已加载，请复制', icon: 'success' })
+	}
+
+	function doImport() { eiModeExport.value = false; eiText.value = ''; uni.showToast({ title: '请粘贴要导入的数据', icon: 'none' }) }
+
+	function doImportFromText() {
+		try {
+			const arr = JSON.parse(eiText.value) as UTSJSONObject[]
+			if (arr == null || arr.length == 0) throw new Error()
+			let added = 0
+			for (let i = 0; i < arr.length; i++) {
+				const im = storageToCategory(arr[i])
+				const idx = list.value.findIndex((c: Category) => c.name == im.name)
+				if (idx >= 0) {
+					const exist = list.value[idx]
+					for (let j = 0; j < im.records.length; j++) {
+						const r = im.records[j]
+						if (!exist.records.some((er: RecordItem) => er.account == r.account)) {
+							exist.records.push(r); added++
+						}
+					}
+				} else {
+					list.value.push(im); added += im.records.length
+				}
+			}
+			saveData(); closeEI()
+			uni.showToast({ title: `导入完成，新增 ${added} 项`, icon: 'success' })
+		} catch (e) { uni.showToast({ title: '数据格式错误', icon: 'none' }) }
+	}
+
+	onPageShow(() => {
+		const __a = UTSAndroid.getUniActivity()
+		if (__a != null) {
+			__a.getWindow().setBackgroundDrawableResource(android.R.color.transparent)
+			try {
+				const prefs = __a.getSharedPreferences("float_data", 0)
+				const data = prefs.getString("data", "")
+				if (data != null && (data as string).length > 0) {
+					prefs.edit().clear().apply()
+					uni.setClipboardData({ data: data as string })
+					__a.moveTaskToBack(true)
+					return
+				}
+			} catch (e) {}
+		}
+		loadData();
+	})
+</script>
+
+<style>
+	.page { display: flex; flex-direction: column; flex: 1; background-color: #F0F6FC; overflow: hidden; }
+	.search-bar { flex-direction: row; align-items: center; margin: 10px 14px 0; background: #FFFFFF; border-radius: 10px; padding: 0 12px; height: 42px; border: 1px solid #E0E6ED; flex-shrink: 0; }
+	.search-icon { font-size: 16px; margin-right: 8px; }
+	.search-input { flex: 1; height: 42px; font-size: 16px; color: #333; }
+	.search-clear { font-size: 22px; color: #B0BEC5; padding: 4px 6px; font-weight: 400; }
+	.toolbar { padding: 10px 16px 6px; flex-direction: row; justify-content: space-between; align-items: center; flex-shrink: 0; }
+	.toolbar-right { flex-direction: row; align-items: center; }
+	.toolbar-count { font-size: 14px; color: #95A5A6; }
+	.toolbar-btn { font-size: 14px; color: #5B9BD5; padding: 8px 16px; border-radius: 16px; border: 1px solid #5B9BD5; }
+	.toolbar-mode { font-size: 14px; color: #E67E22; padding: 8px 12px; border-radius: 16px; border: 1px solid #E67E22; margin-left: 8px; }
+	.list-scroll { flex: 1; padding-left: 14px; padding-right: 14px; padding-bottom: 100px; }
+	.list { flex-direction: column; }
+	.list-item { flex-direction: row; align-items: center; background: #FFFFFF; border-radius: 12px; padding: 12px 14px; margin-bottom: 8px; box-shadow: 0 1px 6px rgba(91, 155, 213, 0.08); position: relative; }
+	.list-item:active { opacity: 0.8; }
+	.item-seq {
+		position: absolute; top: 4px; left: 4px;
+		width: 18px; height: 18px; border-radius: 9px;
+		background: #E8F0FE; align-items: center; justify-content: center;
+	}
+	.seq-num { font-size: 10px; color: #5B9BD5; font-weight: 600; }
+	.item-icon { width: 44px; height: 44px; border-radius: 22px; background: linear-gradient(135deg, #E8F0FE, #D0E4F7); align-items: center; justify-content: center; margin-right: 14px; flex-shrink: 0; overflow: hidden; }
+	.item-img { width: 44px; height: 44px; border-radius: 22px; }
+	.item-emoji { font-size: 22px; }
+	.item-info { flex: 1; }
+	.item-name { font-size: 16px; font-weight: 600; color: #2C3E50; lines: 1; }
+	.item-right { flex-direction: row; align-items: center; margin-right: 6px; }
+	.item-count { font-size: 12px; color: #B0BEC5; margin-right: 4px; }
+	.item-gear { font-size: 18px; color: #5B9BD5; padding: 4px 8px; }
+	.item-gear:active { opacity: 0.7; }
+	.expand-panel { padding: 0 0 4px 12px; }
+	.expand-record { background: #F8FAFC; border-radius: 10px; margin-bottom: 6px; padding: 12px 12px; flex-direction: row; align-items: stretch; border: 1px solid #E8ECF0; }
+	.rec-seq { width: 18px; height: 18px; border-radius: 9px; background: #E8F0FE; align-items: center; justify-content: center; margin-right: 8px; margin-top: 3px; flex-shrink: 0; }
+	.rec-text { flex: 1; flex-direction: column; justify-content: center; }
+	.rec-row { flex-direction: row; align-items: center; padding: 4px 0; }
+	.rec-label { font-size: 11px; color: #95A5A6; width: 24px; flex-shrink: 0; }
+	.rec-value { font-size: 14px; color: #2C3E50; font-weight: 500; flex: 1; lines: 1; }
+	.rec-star { font-size: 16px; color: #F39C12; margin-left: 4px; padding: 4px; }
+	.rec-actions { flex-direction: row; align-items: stretch; flex-shrink: 0; margin-left: 6px; }
+	.act-left { flex-direction: column; justify-content: center; }
+	.act-mid { flex-direction: column; justify-content: center; }
+	.act-right { flex-direction: column; justify-content: center; align-items: center; }
+	.act-divider { width: 1px; background: #E8ECF0; margin: 2px 6px; }
+	.copy-btn { font-size: 12px; color: #5B9BD5; padding: 4px 10px; border: 1px solid #5B9BD5; border-radius: 6px; text-align: center; margin-bottom: 4px; }
+	.copy-btn:last-child { margin-bottom: 0; }
+	.rec-gear { font-size: 18px; color: #5B9BD5; padding: 2px 4px; }
+	.auto-btn { font-size: 12px; color: #E67E22; padding: 9px 5px; border: 1px solid #E67E22; border-radius: 4px; text-align: center; }
+	.expand-add { height: 40px; background: linear-gradient(135deg, #5B9BD5, #4A8BCF); border-radius: 10px; align-items: center; justify-content: center; margin-top: 6px; }
+	.expand-add.disabled { background: #B0C4DE; }
+	.expand-add-text { font-size: 15px; color: #FFFFFF; font-weight: 500; }
+	.empty { padding-top: 120px; align-items: center; }
+	.empty-text { font-size: 18px; color: #B0BEC5; }
+	.empty-sub { font-size: 14px; color: #CFD8DC; margin-top: 8px; }
+	.fab { position: fixed; right: 24px; bottom: 30px; width: 56px; height: 56px; border-radius: 28px; background: linear-gradient(135deg, #5B9BD5, #4A8BCF); align-items: center; justify-content: center; box-shadow: 0 4px 16px rgba(91, 155, 213, 0.4); z-index: 100; }
+	.fab:active { opacity: 0.8; transform: scale(0.95); }
+	.fab-icon { font-size: 30px; color: #FFFFFF; font-weight: 400; line-height: 30px; }
+	.overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.4); z-index: 200; justify-content: center; align-items: center; }
+	.form-panel { background: #FFFFFF; border-radius: 16px; padding: 24px 20px; width: 85%; max-width: 360px; }
+	.form-title-row { flex-direction: row; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.form-title { font-size: 20px; font-weight: 600; color: #2C3E50; }
+.form-close { font-size: 22px; color: #95A5A6; padding: 4px 8px; }
+	.form-desc { font-size: 14px; color: #95A5A6; text-align: center; margin-bottom: 12px; }
+	.form-type-select { flex-direction: row; margin-bottom: 14px; }
+	.type-option { flex: 1; padding: 10px 0; border-radius: 8px; border: 1px solid #DDD; margin-right: 8px; }
+	.type-option:last-child { margin-right: 0; }
+	.type-option.active { background: #5B9BD5; border-color: #5B9BD5; }
+	.type-option-text { font-size: 15px; color: #666; text-align: center; }
+	.type-option-text.active { color: #FFF; }
+	.input { height: 48px; border: 1px solid #E0E6ED; border-radius: 10px; padding: 0 14px; font-size: 16px; color: #333; background: #F8FAFC; margin-bottom: 12px; }
+	.form-btns { flex-direction: row; justify-content: space-between; margin-top: 6px; }
+	.btn { flex: 1; height: 48px; border-radius: 10px; text-align: center; line-height: 48px; font-size: 18px; font-weight: 500; margin-right: 12px; }
+	.btn:last-child { margin-right: 0; }
+	.btn-cancel { background: #F0F2F5; color: #666; }
+	.btn-save { background: #5B9BD5; color: #FFF; }
+	.ei-panel { max-width: 380px; }
+	.ei-btns { flex-direction: row; margin-bottom: 12px; }
+	.ei-textarea { width: 100%; border: 1px solid #E0E6ED; border-radius: 10px; padding: 10px; font-size: 12px; color: #333; background: #F8FAFC; margin-bottom: 10px; }
+	.item-type-row { flex-direction: row; align-items: center; margin-top: 2px; flex-wrap: nowrap; }
+	.item-type { font-size: 12px; color: #95A5A6; flex-shrink: 0; }
+	.item-url { font-size: 12px; color: #5B9BD5; flex-shrink: 1; lines: 1; }
+	.item-url-copy { font-size: 12px; color: #5B9BD5; background: #E8F0FE; border-radius: 8px; padding: 3px 8px; text-align: center; margin-right: 4px; }
+		.note-content { min-height: 80px; height: 200px; margin-bottom: 12px; }
+		.note-text { font-size: 15px; color: #2C3E50; line-height: 1.5; }
+		.note-textarea { width: 100%; min-height: 100px; border: 1px solid #E0E6ED; border-radius: 10px; padding: 10px; font-size: 15px; color: #333; background: #F8FAFC; margin-bottom: 12px; }
+		.btn-delete { background: #E74C3C; color: #FFF; }
+</style>
